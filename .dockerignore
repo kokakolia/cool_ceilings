@@ -1,0 +1,11 @@
+**
+!ceilings/
+!ceilings/**
+!infra/
+!infra/**
+!labs/
+!labs/pki/
+!labs/pki/lab.py
+!Dockerfile
+!requirements.txt
+**/__pycache__/

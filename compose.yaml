@@ -1,0 +1,321 @@
+name: ceilings-local
+
+x-app: &app
+  image: ceilings-foundation:local
+  build:
+    context: .
+    target: app
+
+x-db-app: &db-app
+  <<: *app
+  healthcheck:
+    test: [CMD-SHELL, 'python -m ceilings check-db "$${CEILINGS_SERVICE}"']
+    interval: 5s
+    timeout: 4s
+    retries: 10
+
+x-bridge: &bridge
+  image: envoyproxy/envoy:v1.40.1
+  user: "101:101"
+  entrypoint: [/usr/local/bin/envoy]
+  command: [-c, /run/pki/envoy.json, --concurrency, "1"]
+
+x-postgres: &postgres
+  image: postgres:17.7-alpine
+  entrypoint: [/bin/sh, /infra/postgres/start.sh]
+  healthcheck:
+    test: [CMD-SHELL, 'PGPASSWORD="$$(cat /run/secrets/db_app_user)" psql -w "host=$${DB_HOST} dbname=$${POSTGRES_DB} user=app_user sslmode=verify-full sslrootcert=/run/trust/root.crt connect_timeout=2" -tAc "SELECT 1"']
+    interval: 5s
+    timeout: 4s
+    retries: 12
+
+x-pg-environment: &pg-environment
+  POSTGRES_PASSWORD_FILE: /run/secrets/db_bootstrap
+  POSTGRES_INITDB_ARGS: --auth-local=trust --auth-host=scram-sha-256
+
+x-pki: &pki
+  image: ceilings-local-pki:local
+  build:
+    context: .
+    target: pki
+  profiles: [tools]
+  networks: [pki]
+
+services:
+  web:
+    <<: *app
+    command: [serve, web]
+    environment: {WEB_ORIGIN: "https://app.ceilings.test:8443"}
+    network_mode: none
+    volumes: [web_socket:/sockets, "${CEILINGS_LOCAL_DIR}/jwt/public:/run/jwt:ro"]
+
+  auth:
+    <<: *db-app
+    command: [serve, auth]
+    environment: {CEILINGS_SERVICE: auth}
+    secrets:
+      - {source: auth_app, target: db_app_user}
+      - {source: rabbit_auth_publisher, target: broker_password}
+      - login_code_key
+      - jwt_key
+    volumes: [auth_socket:/sockets, ca_trust:/run/trust:ro]
+    networks: [auth_data, broker]
+
+  order:
+    <<: *db-app
+    command: [serve, order]
+    environment: {CEILINGS_SERVICE: order}
+    secrets: [{source: order_app, target: db_app_user}]
+    volumes: [order_socket:/sockets, ca_trust:/run/trust:ro]
+    networks: [order_data]
+
+  noti:
+    <<: *db-app
+    command: [serve, noti]
+    environment: {CEILINGS_SERVICE: noti}
+    secrets: [{source: noti_app, target: db_app_user}]
+    volumes: [ca_trust:/run/trust:ro]
+    networks: [noti_data]
+
+  noti-codes:
+    <<: *app
+    command: [consume-codes]
+    secrets:
+      - {source: noti_app, target: db_app_user}
+      - {source: rabbit_noti_codes, target: broker_password}
+    volumes: [ca_trust:/run/trust:ro]
+    networks: [noti_data, broker, mail]
+
+  jwt-keys:
+    <<: *app
+    user: "0:0"
+    profiles: [tools]
+    command: [bootstrap-jwt, /jwt]
+    network_mode: none
+    volumes: ["${CEILINGS_LOCAL_DIR}/jwt:/jwt"]
+
+  migrate-auth:
+    <<: *app
+    profiles: [tools]
+    command: [migrate, auth]
+    secrets: [{source: auth_migrator, target: db_migrator}]
+    volumes: [ca_trust:/run/trust:ro]
+    networks: [auth_data]
+
+  migrate-order:
+    <<: *app
+    profiles: [tools]
+    command: [migrate, order]
+    secrets: [{source: order_migrator, target: db_migrator}]
+    volumes: [ca_trust:/run/trust:ro]
+    networks: [order_data]
+
+  migrate-noti:
+    <<: *app
+    profiles: [tools]
+    command: [migrate, noti]
+    secrets: [{source: noti_migrator, target: db_migrator}]
+    volumes: [ca_trust:/run/trust:ro]
+    networks: [noti_data]
+
+  admin:
+    <<: *app
+    profiles: [tools]
+    command: [create-first-admin]
+    secrets: [{source: auth_app, target: db_app_user}]
+    volumes: [ca_trust:/run/trust:ro]
+    networks: [auth_data]
+
+  pg-auth:
+    <<: *postgres
+    environment:
+      <<: *pg-environment
+      POSTGRES_DB: ceilings_auth
+      DB_HOST: pg-auth.ceilings.test
+    secrets:
+      - {source: auth_bootstrap, target: db_bootstrap}
+      - {source: auth_app, target: db_app_user}
+      - {source: auth_migrator, target: db_migrator}
+    volumes:
+      - pg_auth:/var/lib/postgresql/data
+      - pg_auth_tls:/run/server-tls:ro
+      - ca_trust:/run/trust:ro
+      - ./infra/postgres:/infra/postgres:ro
+      - ./infra/postgres/roles.sh:/docker-entrypoint-initdb.d/01-roles.sh:ro
+    networks:
+      auth_data: {aliases: [pg-auth.ceilings.test]}
+
+  pg-order:
+    <<: *postgres
+    environment:
+      <<: *pg-environment
+      POSTGRES_DB: ceilings_order
+      DB_HOST: pg-order.ceilings.test
+    secrets:
+      - {source: order_bootstrap, target: db_bootstrap}
+      - {source: order_app, target: db_app_user}
+      - {source: order_migrator, target: db_migrator}
+    volumes:
+      - pg_order:/var/lib/postgresql/data
+      - pg_order_tls:/run/server-tls:ro
+      - ca_trust:/run/trust:ro
+      - ./infra/postgres:/infra/postgres:ro
+      - ./infra/postgres/roles.sh:/docker-entrypoint-initdb.d/01-roles.sh:ro
+    networks:
+      order_data: {aliases: [pg-order.ceilings.test]}
+
+  pg-noti:
+    <<: *postgres
+    environment:
+      <<: *pg-environment
+      POSTGRES_DB: ceilings_noti
+      DB_HOST: pg-noti.ceilings.test
+    secrets:
+      - {source: noti_bootstrap, target: db_bootstrap}
+      - {source: noti_app, target: db_app_user}
+      - {source: noti_migrator, target: db_migrator}
+    volumes:
+      - pg_noti:/var/lib/postgresql/data
+      - pg_noti_tls:/run/server-tls:ro
+      - ca_trust:/run/trust:ro
+      - ./infra/postgres:/infra/postgres:ro
+      - ./infra/postgres/roles.sh:/docker-entrypoint-initdb.d/01-roles.sh:ro
+    networks:
+      noti_data: {aliases: [pg-noti.ceilings.test]}
+
+  rabbitmq:
+    image: rabbitmq:4.1.4-alpine
+    hostname: rabbitmq
+    entrypoint: [/bin/sh, /infra/rabbitmq/start.sh]
+    environment:
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: '+S 2:2 +A 4'
+    secrets: [rabbit_definitions]
+    volumes: [rabbit_data:/var/lib/rabbitmq, rabbit_tls:/run/server-tls:ro, ./infra/rabbitmq:/infra/rabbitmq:ro]
+    networks:
+      broker: {aliases: [rabbitmq.ceilings.test]}
+    healthcheck:
+      test: [CMD, rabbitmq-diagnostics, -q, check_running]
+      interval: 5s
+      timeout: 5s
+      retries: 14
+
+  mailpit:
+    image: axllent/mailpit:v1.27.8
+    environment:
+      MP_SMTP_BIND_ADDR: mailpit-smtp:1025
+      MP_UI_BIND_ADDR: mailpit-ui:8025
+    networks:
+      mail: {aliases: [mailpit-smtp]}
+      mail_ui: {aliases: [mailpit-ui]}
+
+  ca:
+    image: smallstep/step-ca:0.30.2
+    user: "0:0"
+    environment: {STEPPATH: /ca}
+    entrypoint: [/usr/local/bin/step-ca]
+    command: [/ca/config/ca.json, --password-file, /run/secrets/ca_password]
+    secrets: [ca_password]
+    healthcheck: {disable: true}
+    volumes: [ca:/ca]
+    networks:
+      pki: {aliases: [ca.ceilings.test]}
+
+  envoy-web:
+    <<: *bridge
+    secrets: [browser_cert, browser_key]
+    ports: ["127.0.0.1:8443:8443"]
+    volumes: [web_pki:/run/pki:ro, web_socket:/sockets]
+    networks: [front, api, mail_ui]
+
+  envoy-auth:
+    <<: *bridge
+    volumes: [auth_pki:/run/pki:ro, auth_socket:/sockets]
+    networks:
+      api: {aliases: [auth.ceilings.test]}
+
+  envoy-order:
+    <<: *bridge
+    volumes: [order_pki:/run/pki:ro, order_socket:/sockets]
+    networks:
+      api: {aliases: [order.ceilings.test]}
+
+  pki-operator:
+    <<: *pki
+    environment: {STEPPATH: /offline/step}
+    secrets: [ca_password, operator_password]
+    volumes:
+      - ca:/ca
+      - ca_offline:/offline
+      - ca_trust:/trust
+      - web_pki:/roles/web
+      - auth_pki:/roles/auth
+      - order_pki:/roles/order
+      - web_socket:/socket-volumes/web
+      - auth_socket:/socket-volumes/auth
+      - order_socket:/socket-volumes/order
+      - pg_auth_tls:/native/pg-auth
+      - pg_order_tls:/native/pg-order
+      - pg_noti_tls:/native/pg-noti
+      - rabbit_tls:/native/rabbitmq
+
+  pki-web:
+    <<: *pki
+    volumes: [web_pki:/run/pki]
+
+  pki-auth:
+    <<: *pki
+    volumes: [auth_pki:/run/pki]
+
+  pki-order:
+    <<: *pki
+    volumes: [order_pki:/run/pki]
+
+networks:
+  front:
+  api: {internal: true}
+  pki: {internal: true}
+  auth_data: {internal: true}
+  order_data: {internal: true}
+  noti_data: {internal: true}
+  broker: {internal: true}
+  mail: {internal: true}
+  mail_ui: {internal: true}
+
+volumes:
+  ca:
+  ca_offline:
+  ca_trust:
+  web_pki:
+  auth_pki:
+  order_pki:
+  web_socket:
+  auth_socket:
+  order_socket:
+  pg_auth:
+  pg_order:
+  pg_noti:
+  pg_auth_tls:
+  pg_order_tls:
+  pg_noti_tls:
+  rabbit_data:
+  rabbit_tls:
+
+secrets:
+  browser_cert: {file: "${CEILINGS_LOCAL_DIR:?Run scripts/local.py}/browser/cert.pem"}
+  browser_key: {file: "${CEILINGS_LOCAL_DIR}/browser/key.pem"}
+  ca_password: {file: "${CEILINGS_LOCAL_DIR}/secrets/ca_password"}
+  operator_password: {file: "${CEILINGS_LOCAL_DIR}/secrets/operator_password"}
+  login_code_key: {file: "${CEILINGS_LOCAL_DIR}/secrets/login_code_key"}
+  jwt_key: {file: "${CEILINGS_LOCAL_DIR}/jwt/private/key.pem"}
+  rabbit_auth_publisher: {file: "${CEILINGS_LOCAL_DIR}/secrets/rabbit_auth_publisher"}
+  rabbit_noti_codes: {file: "${CEILINGS_LOCAL_DIR}/secrets/rabbit_noti_codes"}
+  rabbit_definitions: {file: "${CEILINGS_LOCAL_DIR}/secrets/rabbit_definitions.json"}
+  auth_bootstrap: {file: "${CEILINGS_LOCAL_DIR}/secrets/auth_bootstrap"}
+  auth_app: {file: "${CEILINGS_LOCAL_DIR}/secrets/auth_app"}
+  auth_migrator: {file: "${CEILINGS_LOCAL_DIR}/secrets/auth_migrator"}
+  order_bootstrap: {file: "${CEILINGS_LOCAL_DIR}/secrets/order_bootstrap"}
+  order_app: {file: "${CEILINGS_LOCAL_DIR}/secrets/order_app"}
+  order_migrator: {file: "${CEILINGS_LOCAL_DIR}/secrets/order_migrator"}
+  noti_bootstrap: {file: "${CEILINGS_LOCAL_DIR}/secrets/noti_bootstrap"}
+  noti_app: {file: "${CEILINGS_LOCAL_DIR}/secrets/noti_app"}
+  noti_migrator: {file: "${CEILINGS_LOCAL_DIR}/secrets/noti_migrator"}

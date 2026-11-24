@@ -1,0 +1,105 @@
+{
+  "project": "ceilings-pki-be34e209",
+  "at": "2026-11-15T12:25:07.414245+00:00",
+  "checks": {
+    "1. issuance and mTLS": {
+      "status": "passed",
+      "evidence": {
+        "good_web_serial": "D021BD49E843167DA24AB01890A878A9",
+        "without_client": {
+          "accepted": false,
+          "reason": "[Errno 32] Broken pipe"
+        },
+        "wrong_client_san": {
+          "accepted": false,
+          "reason": "[SSL: SSLV3_ALERT_CERTIFICATE_UNKNOWN] ssl/tls alert certificate unknown (_ssl.c:2580)"
+        },
+        "wrong_server_san": "valid at its own name; Web returned 503",
+        "outsider": "Outsider reaches the Order mTLS listener only; direct routes unavailable"
+      }
+    },
+    "2. rekey and SDS": {
+      "status": "passed",
+      "evidence": {
+        "interrupted": "stopped before publishing tls-sds.yaml",
+        "web": [
+          {
+            "serial": "D021BD49E843167DA24AB01890A878A9",
+            "spki_sha256": "d1c3d461e00514785605b0743c0981ccc1566d08f17918a22452e51bfa6468d8",
+            "not_after": "Nov 15 12:55:19 2026 GMT"
+          },
+          {
+            "serial": "8AB231867A03C0C1195130A1846492A7",
+            "spki_sha256": "867964df065c0fea157400b9dac15d6cbb23add3d12b12a9d67d6ae2a6b4aeef",
+            "not_after": "Nov 15 12:56:29 2026 GMT"
+          }
+        ],
+        "order": [
+          {
+            "serial": "C2FFDB0302E49F3BDBDD320A5767D7FD",
+            "spki_sha256": "b06ea4a3636e451751d6230088dd200eb205606c45f77f7a36f30e6ba5c2b162",
+            "not_after": "Nov 15 12:55:26 2026 GMT"
+          },
+          {
+            "serial": "688F52936ED3BF9668A81A7B0B451AC9",
+            "spki_sha256": "5aad60021000a2911682c675a46a19164d18bebeb1e5f42982a63d8396585554",
+            "not_after": "Nov 15 12:56:31 2026 GMT"
+          }
+        ]
+      }
+    },
+    "3. emergency revocation": {
+      "status": "passed",
+      "evidence": {
+        "web": {
+          "old_serial": "8AB231867A03C0C1195130A1846492A7",
+          "new_serial": "8AF8A5ABA352167D56EB786D8C655E6F",
+          "old_still_unexpired": true,
+          "established_connection_closed": true,
+          "revoked_result": {
+            "accepted": false,
+            "reason": "[SSL: SSLV3_ALERT_CERTIFICATE_REVOKED] ssl/tls alert certificate revoked (_ssl.c:2580)"
+          }
+        },
+        "order": {
+          "old_serial": "688F52936ED3BF9668A81A7B0B451AC9",
+          "new_serial": "8C8C8456F2937736DE4E917B385AEEF8",
+          "old_still_unexpired": true,
+          "established_connection_closed": true,
+          "revoked_result": {
+            "accepted": false,
+            "web_http_status": 503,
+            "web_error": "upstream connect error or disconnect/reset before headers. reset reason: remote connection failure",
+            "old_certificate_observed": true
+          }
+        }
+      }
+    },
+    "4. CA outage and CRL expiry": {
+      "status": "passed",
+      "evidence": {
+        "service": {
+          "status_while_ca_down_and_crl_valid": 200,
+          "status_after_next_update": 503,
+          "error": "upstream connect error or disconnect/reset before headers. reset reason: remote connection failure",
+          "other_crl_unexpired": true,
+          "leaf_certs_unexpired": true,
+          "status_after_refresh": 200
+        },
+        "root": {
+          "status_while_ca_down_and_crl_valid": 200,
+          "status_after_next_update": 503,
+          "error": "upstream connect error or disconnect/reset before headers. reset reason: remote connection failure",
+          "other_crl_unexpired": true,
+          "leaf_certs_unexpired": true,
+          "status_after_refresh": 200
+        }
+      }
+    }
+  },
+  "versions": {
+    "step": "Smallstep CLI/0.31.0 (linux/amd64)\nRelease Date: 2026-09-25 19:54 UTC",
+    "step-ca": "Smallstep CA/0.30.2 (linux/amd64)\nRelease Date: 2026-03-23 00:18 UTC",
+    "envoy": "envoy  version: 86af01fdec40c31d025c495a4aa303c4126b2fd0/1.40.1/Clean/RELEASE/BoringSSL"
+  }
+}

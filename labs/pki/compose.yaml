@@ -1,0 +1,88 @@
+name: ceilings-pki
+
+x-tools: &tools
+  build: .
+  image: ceilings-pki-tools:local
+
+services:
+  ca:
+    image: smallstep/step-ca:0.30.2
+    user: "0:0"
+    environment:
+      STEPPATH: /ca
+    entrypoint: ["/usr/local/bin/step-ca"]
+    command: ["/ca/config/ca.json", "--password-file", "/ca/secrets/password"]
+    healthcheck:
+      disable: true
+    volumes: [ca:/ca]
+    networks:
+      control:
+        aliases: [ca.ceilings.test]
+
+  order:
+    image: python:3.12.11-alpine3.22
+    command: ["python", "/lab/backend.py"]
+    volumes: ["./backend.py:/lab/backend.py:ro", order_socket:/sockets]
+    network_mode: none
+
+  envoy-web:
+    image: envoyproxy/envoy:v1.40.1
+    user: "101:101"
+    entrypoint: ["/usr/local/bin/envoy"]
+    command: ["-c", "/run/pki/envoy.json", "--concurrency", "1"]
+    volumes: ["web_pki:/run/pki:ro", web_socket:/sockets]
+    networks: [edge]
+
+  envoy-order:
+    image: envoyproxy/envoy:v1.40.1
+    user: "101:101"
+    entrypoint: ["/usr/local/bin/envoy"]
+    command: ["-c", "/run/pki/envoy.json", "--concurrency", "1"]
+    volumes: ["order_pki:/run/pki:ro", order_socket:/sockets]
+    networks:
+      edge:
+        aliases: [order.ceilings.test]
+
+  operator:
+    <<: *tools
+    profiles: [tools]
+    environment:
+      STEPPATH: /offline/step
+    volumes:
+      - ca:/ca
+      - offline:/offline
+      - web_pki:/roles/web
+      - order_pki:/roles/order
+      - web_socket:/web-socket
+    networks: [control, edge]
+
+  web-updater:
+    <<: *tools
+    profiles: [tools]
+    volumes: [web_pki:/run/pki]
+    networks: [control]
+
+  order-updater:
+    <<: *tools
+    profiles: [tools]
+    volumes: [order_pki:/run/pki]
+    networks: [control]
+
+  outsider:
+    image: python:3.12.11-alpine3.22
+    profiles: [tools]
+    networks: [edge]
+
+networks:
+  edge:
+    internal: true
+  control:
+    internal: true
+
+volumes:
+  ca:
+  offline:
+  web_pki:
+  order_pki:
+  web_socket:
+  order_socket:

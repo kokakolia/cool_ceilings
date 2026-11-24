@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ceilings</title>
+  <style>
+    body { margin: 0; background: #f4f6f4; color: #13251e; font: 1rem/1.6 system-ui, sans-serif; }
+    main { max-width: 30rem; margin: 8vh auto; padding: 2rem; background: white; border: 1px solid #dbe5de; border-radius: 1rem; }
+    nav { display: flex; flex-wrap: wrap; gap: 1.25rem; }
+    h1 { line-height: 1.2; font-size: 2rem; }
+    form { margin: 1rem 0; }
+    input { display: block; width: 100%; box-sizing: border-box; margin: .25rem 0 .75rem; }
+    input, button { font: inherit; border-radius: .5rem; padding: .55rem .75rem; border: 1px solid #526d5d; }
+    button { cursor: pointer; background: #194331; color: white; }
+    button:disabled { opacity: .55; cursor: wait; }
+    a { color: #194331; }
+    #message { color: #773411; }
+    @media (max-width: 36rem) { main { margin: 1rem; padding: 1.25rem; } }
+  </style>
+  <script src="/login.js" defer></script>
+</head>
+<body>
+  <main>
+    <nav><a href="/">Кабинет клиента</a><a href="/admin">Панель администратора</a></nav>
+    <h1 id="heading">Ceilings</h1>
+    <p id="message" role="status" aria-live="polite"></p>
+    <button id="retry-session" hidden>Повторить проверку входа</button>
+    <section id="login" hidden>
+      <form id="request-code">
+        <label for="email">Электронная почта</label>
+        <input id="email" name="email" type="text" inputmode="email" autocomplete="email" maxlength="320" required>
+        <button>Получить код</button>
+      </form>
+      <form id="verify-code" hidden>
+        <label for="code">Код из письма</label>
+        <input id="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required>
+        <button>Подтвердить код</button>
+      </form>
+    </section>
+    <section id="signed-in" hidden>
+      <p>Вход выполнен для <strong id="account"></strong>.</p>
+    </section>
+    <button id="logout" hidden>Выйти</button>
+  </main>
+</body>
+</html>
